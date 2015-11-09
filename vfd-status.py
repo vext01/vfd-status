@@ -7,69 +7,96 @@ import mailbox
 
 from socket import gethostname
 
-MOD = sys.modules[__name__]
-SER = serial.Serial('/dev/ttyU0', 38400, timeout=1)
 USER =os.environ["USER"]
 MBOX = os.sep + os.path.join("var", "mail", USER)
 
-CMDS = {
-    "CLR": (0x0e, 900),     # clear
-    "FF": (0x0c, 200),      # form feed
-    "CR": (0xd, 200),       # carriage return
-    "LF": (0xa, 900),       # line feed
-    "DC6": (0x16, 200),     # cursor off
-}
+class Wait:
+    """Wait decorator"""
 
-class Cmd:
     MICROSEC = 10 ** -6
 
-    def __init__(self, ser, val, sleep):
-        self.val = val
-        self.ser = ser
-        self.sleep = sleep
+    def __init__(self, usecs):
+        self.usecs = usecs
 
-    def __call__(self):
-        self.ser.write([self.val])
-        time.sleep(self.sleep * self.MICROSEC)
+    def __call__(self, func):
+        def wrap(*args, **kwargs):
+            func(*args, **kwargs)
+            time.sleep(self.usecs * self.MICROSEC)
+        return wrap
 
-for name, (val, sleep) in CMDS.items():
-    setattr(MOD, name, Cmd(SER, val, sleep))
+    @staticmethod
+    def wait(usecs):
+        time.sleep(Wait.MICROSEC * usecs)
 
-def write(msg):
-    SER.write(bytes(msg, encoding="ascii"))
 
-def CLRFF():
-    CLR()
-    FF()
+class VHD:
+    """Raw access to the VHD via serial interface."""
 
-def mk_mail(ticks):
+    def __init__(self, port="/dev/ttyU0", baud=38400):
+        self.ser = serial.Serial(port, baud, timeout=1)
+
+    def write(self, msg):
+        for ch in msg:
+            self.ser.write(bytes(str(ch), encoding="ascii"))
+            # Strictly speaking we should wait 200us, however, this visibly
+            # slows down writing to the VHD. Presumably the interpeter overhead
+            # is already greter than the required wait.
+            #Wait.wait(200)
+
+    @Wait(900)
+    def clear(self):
+        self.ser.write([0xe])
+
+    @Wait(200)
+    def cursor_home(self):
+        """AKA form feed"""
+        self.ser.write([0xc])
+
+    @Wait(200)
+    def carriage_return(self):
+        self.ser.write([0xd])
+
+    @Wait(900)
+    def line_feed(self):
+        self.ser.write([0xa])
+
+    @Wait(200)
+    def cursor_off(self):
+        """AKA DC6"""
+        self.ser.write([0x16])
+
+def mk_mail(vhd, ticks):
     box = mailbox.mbox(MBOX)
-    write("Mail: %s" % USER)
-    LF()
-    CR()
-    write("%d messages" % len(box))
+    count = len(box)
     box.close()
+
+    vhd.write("Mail: %s" % USER)
+    vhd.line_feed()
+    vhd.carriage_return()
+    vhd.write("%d messages" % count)
     for i in range(ticks):
         _ = yield
 
-def mk_hostname(ticks):
-    write(gethostname())
-    LF()
+def mk_hostname(vhd, ticks):
+    vhd.write(gethostname())
+    vhd.line_feed()
     for i in range(ticks):
         _ = yield
 
-def mk_time(ticks):
+def mk_time(vhd, ticks):
     tm_s = time.strftime("%A %b %d, %Y")
-    write(tm_s)
-    LF()
+    vhd.write(tm_s)
+    vhd.line_feed()  # assume date doesn't change for duration of this screen
     for i in range(ticks):
-        CR()
+        vhd.carriage_return()
         tm_s = time.strftime("%H:%M:%S")
-        write(tm_s)
+        vhd.write(tm_s)
         _ = yield
 
 class Status:
-    def __init__(self):
+    def __init__(self, vfd):
+        self.vhd = vhd
+        self.vhd.cursor_off()
         self.current_mode = -1
         self.modes = [mk_hostname, mk_time, mk_mail]
         self.n_modes = len(self.modes)
@@ -78,9 +105,10 @@ class Status:
         self.next_mode()
 
     def next_mode(self):
-        CLRFF()
+        self.vhd.clear()
+        self.vhd.cursor_home()
         self.current_mode = (self.current_mode + 1) % self.n_modes
-        self.gen = self.modes[self.current_mode](self.mode_duration)
+        self.gen = self.modes[self.current_mode](self.vhd, self.mode_duration)
 
     def run(self):
         while True:
@@ -93,6 +121,6 @@ class Status:
 
 
 if __name__ == "__main__":
-    status = Status()
+    vhd = VHD()
+    status = Status(vhd)
     status.run()
-    SER.close()
