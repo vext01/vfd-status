@@ -4,7 +4,7 @@ import sys
 import time
 import os
 import mailbox
-
+from abc import ABCMeta, abstractmethod
 from socket import gethostname
 
 USER =os.environ["USER"]
@@ -65,40 +65,58 @@ class VHD:
         """AKA DC6"""
         self.ser.write([0x16])
 
-def mk_mail(vhd, ticks):
-    box = mailbox.mbox(MBOX)
-    count = len(box)
-    box.close()
 
-    vhd.write("Mail: %s" % USER)
-    vhd.line_feed()
-    vhd.carriage_return()
-    vhd.write("%d messages" % count)
-    for i in range(ticks):
-        _ = yield
+class BasePlugiun(metaclass=ABCMeta):
+    def __init__(self, vhd, duration):
+        self.vhd = vhd
+        self.duration = duration
+        self.generator = self.make_generator()
 
-def mk_hostname(vhd, ticks):
-    vhd.write(gethostname())
-    vhd.line_feed()
-    for i in range(ticks):
-        _ = yield
+    @abstractmethod
+    def make_generator(self):
+        pass
 
-def mk_time(vhd, ticks):
-    tm_s = time.strftime("%A %b %d, %Y")
-    vhd.write(tm_s)
-    vhd.line_feed()  # assume date doesn't change for duration of this screen
-    for i in range(ticks):
-        vhd.carriage_return()
-        tm_s = time.strftime("%H:%M:%S")
-        vhd.write(tm_s)
-        _ = yield
+
+class TimePlugin(BasePlugiun):
+    def make_generator(self):
+        tm_s = time.strftime("%A %b %d, %Y")
+        self.vhd.write(tm_s)
+        self.vhd.line_feed()  # assume date doesn't change for duration of this screen
+        for i in range(self.duration):
+            self.vhd.carriage_return()
+            tm_s = time.strftime("%H:%M:%S")
+            self.vhd.write(tm_s)
+            _ = yield
+
+
+class MailPlugin(BasePlugiun):
+    def make_generator(self):
+        box = mailbox.mbox(MBOX)
+        count = len(box)
+        box.close()
+
+        self.vhd.write("Mail: %s" % USER)
+        self.vhd.line_feed()
+        self.vhd.carriage_return()
+        self.vhd.write("%d messages" % count)
+        for i in range(self.duration):
+            _ = yield
+
+
+class HostNamePlugin(BasePlugiun):
+    def make_generator(self):
+        self.vhd.write(gethostname())
+        self.vhd.line_feed()
+        for i in range(self.duration):
+            _ = yield
+
 
 class Status:
     def __init__(self, vfd):
         self.vhd = vhd
         self.vhd.cursor_off()
         self.current_mode = -1
-        self.modes = [mk_hostname, mk_time, mk_mail]
+        self.modes = [HostNamePlugin, TimePlugin, MailPlugin]
         self.n_modes = len(self.modes)
         self.gen = None
         self.mode_duration = 5
@@ -108,7 +126,8 @@ class Status:
         self.vhd.clear()
         self.vhd.cursor_home()
         self.current_mode = (self.current_mode + 1) % self.n_modes
-        self.gen = self.modes[self.current_mode](self.vhd, self.mode_duration)
+        plugin = self.modes[self.current_mode](self.vhd, self.mode_duration)
+        self.gen = plugin.make_generator()
 
     def run(self):
         while True:
