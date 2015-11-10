@@ -30,8 +30,8 @@ class Wait:
         time.sleep(Wait.MICROSEC * usecs)
 
 
-class VHD:
-    """Raw access to the VHD via serial interface."""
+class VFD:
+    """Raw access to the VFD via serial interface."""
 
     def __init__(self, port="/dev/ttyU0", baud=38400):
         self.ser = serial.Serial(port, baud, timeout=1)
@@ -79,8 +79,8 @@ class VHD:
 
 
 class BasePlugiun(metaclass=ABCMeta):
-    def __init__(self, vhd, duration):
-        self.vhd = vhd
+    def __init__(self, vfd, duration):
+        self.vfd = vfd
         self.duration = duration
         self.generator = self.make_generator()
 
@@ -140,8 +140,8 @@ class MpdPlugin(BasePlugiun):
             return artist + " - " + title
 
     def make_generator(self):
-        self.vhd.clear()
-        self.vhd.cursor_home()
+        self.vfd.clear()
+        self.vfd.cursor_home()
 
         mode_ch = self._get_playstate()
         if mode_ch != self.STOP_SYMBOL:
@@ -149,10 +149,10 @@ class MpdPlugin(BasePlugiun):
         else:
             song = "MPD idle"
 
-        remain_space = self.vhd.n_chars - 2
+        remain_space = self.vfd.n_chars - 2
         trim_song = song[:remain_space]
-        self.vhd.raw_write(mode_ch)
-        self.vhd.write(" %s" % trim_song)
+        self.vfd.raw_write(mode_ch)
+        self.vfd.write(" %s" % trim_song)
 
         for i in range(self.duration):
             _ = yield
@@ -160,13 +160,13 @@ class MpdPlugin(BasePlugiun):
 class TimePlugin(BasePlugiun):
     def make_generator(self):
         tm_s = time.strftime("%a %b %d, %Y")
-        self.vhd.write(tm_s)
-        self.vhd.cursor_home()  # assume date doesn't change for duration of this screen
-        self.vhd.line_feed()
+        self.vfd.write(tm_s)
+        self.vfd.cursor_home()  # assume date doesn't change for duration of this screen
+        self.vfd.line_feed()
         for i in range(self.duration):
-            self.vhd.carriage_return()
+            self.vfd.carriage_return()
             tm_s = time.strftime("%H:%M:%S")
-            self.vhd.write(tm_s)
+            self.vfd.write(tm_s)
             _ = yield
 
 
@@ -176,26 +176,26 @@ class MailPlugin(BasePlugiun):
         count = len(box)
         box.close()
 
-        self.vhd.write("Mail: %s" % USER)
-        self.vhd.line_feed()
-        self.vhd.carriage_return()
-        self.vhd.write("%d messages" % count)
+        self.vfd.write("Mail: %s" % USER)
+        self.vfd.line_feed()
+        self.vfd.carriage_return()
+        self.vfd.write("%d messages" % count)
         for i in range(self.duration):
             _ = yield
 
 
 class HostNamePlugin(BasePlugiun):
     def make_generator(self):
-        self.vhd.write(gethostname())
-        self.vhd.line_feed()
+        self.vfd.write(gethostname())
+        self.vfd.line_feed()
         for i in range(self.duration):
             _ = yield
 
 
 class Status:
     def __init__(self, vfd):
-        self.vhd = vhd
-        self.vhd.cursor_off()
+        self.vfd = vfd
+        self.vfd.cursor_off()
         self.current_mode = -1
         self.modes = [MpdPlugin, HostNamePlugin, TimePlugin, MailPlugin]
         self.n_modes = len(self.modes)
@@ -204,10 +204,10 @@ class Status:
         self.next_mode()
 
     def next_mode(self):
-        self.vhd.clear()
-        self.vhd.cursor_home()
+        self.vfd.clear()
+        self.vfd.cursor_home()
         self.current_mode = (self.current_mode + 1) % self.n_modes
-        plugin = self.modes[self.current_mode](self.vhd, self.mode_duration)
+        plugin = self.modes[self.current_mode](self.vfd, self.mode_duration)
         self.gen = plugin.make_generator()
 
     def run(self):
@@ -221,6 +221,6 @@ class Status:
 
 
 if __name__ == "__main__":
-    vhd = VHD()
-    status = Status(vhd)
+    vfd = VFD()
+    status = Status(vfd)
     status.run()
