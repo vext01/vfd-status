@@ -197,7 +197,7 @@ class Status:
         self.vfd = vfd
         self.vfd.cursor_off()
         self.current_mode = -1
-        self.modes = [MpdPlugin, HostNamePlugin, TimePlugin, MailPlugin]
+        self.modes = [HostNamePlugin, TimePlugin, MailPlugin, MpdPlugin]
         self.n_modes = len(self.modes)
         self.gen = None
         self.mode_duration = 5
