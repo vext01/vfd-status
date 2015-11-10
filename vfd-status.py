@@ -4,6 +4,7 @@ import sys
 import time
 import os
 import mailbox
+import subprocess
 from abc import ABCMeta, abstractmethod
 from socket import gethostname
 
@@ -34,14 +35,20 @@ class VHD:
 
     def __init__(self, port="/dev/ttyU0", baud=38400):
         self.ser = serial.Serial(port, baud, timeout=1)
+        # XXX hard-coded
+        self.n_rows = 2
+        self.n_cols = 20
+        self.n_chars = self.n_rows * self.n_cols
+        self.japanese_font()
 
     def write(self, msg):
         for ch in msg:
             self.ser.write(bytes(str(ch), encoding="ascii"))
-            # Strictly speaking we should wait 200us, however, this visibly
-            # slows down writing to the VHD. Presumably the interpeter overhead
-            # is already greter than the required wait.
-            #Wait.wait(200)
+            Wait.wait(200)
+
+    def raw_write(self, ch, wait=200):
+        self.ser.write([ch])
+        Wait.wait(wait)
 
     @Wait(900)
     def clear(self):
@@ -65,6 +72,11 @@ class VHD:
         """AKA DC6"""
         self.ser.write([0x16])
 
+    @Wait(200)
+    def japanese_font(self):
+        """AKA CT1"""
+        self.ser.write([0x19])
+
 
 class BasePlugiun(metaclass=ABCMeta):
     def __init__(self, vhd, duration):
@@ -76,6 +88,74 @@ class BasePlugiun(metaclass=ABCMeta):
     def make_generator(self):
         pass
 
+class MpdPlugin(BasePlugiun):
+    PLAY_SYMBOL = 0x99
+    PAUSE_SYMBOL = 0x9c
+    STOP_SYMBOL = 0xf8
+
+    def _get_playstate(self):
+        p = subprocess.Popen("mpc", shell=True, stdout=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        stdout_s = stdout.decode("utf-8").strip()
+        lines = stdout_s.split("\n")
+
+        if len(lines) == 1:
+            return self.STOP_SYMBOL
+        else:
+            assert len(lines) == 3
+            s_idx = lines[1].index("[")
+            e_idx = lines[1].index("]")
+            mode = lines[1][s_idx + 1:e_idx]
+            if mode == "playing":
+                mode_ch = self.PLAY_SYMBOL
+            elif mode == "paused":
+                mode_ch = self.PAUSE_SYMBOL
+            return mode_ch
+
+    def _get_field(self, field):
+        p = subprocess.Popen("mpc -f %%%s%%" % field,
+                              shell=True, stdout=subprocess.PIPE)
+        stdout, stderr = p.communicate()
+        stdout_s = stdout.decode("utf-8").rstrip()
+        lines = stdout_s.split("\n")
+
+        if len(lines) == 1:
+            # hrm, MPD is stopped
+            v = ""
+        else:
+            assert(len(lines) == 3)
+            v = lines[0].strip()
+
+        print("field %s=%s" % (field, v))
+        return v
+
+    def _get_song_info(self):
+        # This isn't an exact science
+        artist = self._get_field("artist")
+        title = self._get_field("title")
+        if artist == "":
+            # Streams tend to put artist and title here
+            return title
+        else:
+            return artist + " - " + title
+
+    def make_generator(self):
+        self.vhd.clear()
+        self.vhd.cursor_home()
+
+        mode_ch = self._get_playstate()
+        if mode_ch != self.STOP_SYMBOL:
+            song = self._get_song_info()
+        else:
+            song = "MPD idle"
+
+        remain_space = self.vhd.n_chars - 2
+        trim_song = song[:remain_space]
+        self.vhd.raw_write(mode_ch)
+        self.vhd.write(" %s" % trim_song)
+
+        for i in range(self.duration):
+            _ = yield
 
 class TimePlugin(BasePlugiun):
     def make_generator(self):
@@ -116,7 +196,7 @@ class Status:
         self.vhd = vhd
         self.vhd.cursor_off()
         self.current_mode = -1
-        self.modes = [HostNamePlugin, TimePlugin, MailPlugin]
+        self.modes = [MpdPlugin, HostNamePlugin, TimePlugin, MailPlugin]
         self.n_modes = len(self.modes)
         self.gen = None
         self.mode_duration = 5
