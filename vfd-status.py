@@ -193,6 +193,8 @@ class HostNamePlugin(BasePlugiun):
 
 
 class Status:
+    TICK = 0.9
+
     def __init__(self, vfd):
         self.vfd = vfd
         self.vfd.cursor_off()
@@ -217,7 +219,7 @@ class Status:
             except StopIteration as e:
                 self.next_mode()
                 continue
-            time.sleep(1)
+            time.sleep(self.TICK)
 
 
 if __name__ == "__main__":
