@@ -159,9 +159,10 @@ class MpdPlugin(BasePlugiun):
 
 class TimePlugin(BasePlugiun):
     def make_generator(self):
-        tm_s = time.strftime("%A %b %d, %Y")
+        tm_s = time.strftime("%a %b %d, %Y")
         self.vhd.write(tm_s)
-        self.vhd.line_feed()  # assume date doesn't change for duration of this screen
+        self.vhd.cursor_home()  # assume date doesn't change for duration of this screen
+        self.vhd.line_feed()
         for i in range(self.duration):
             self.vhd.carriage_return()
             tm_s = time.strftime("%H:%M:%S")
