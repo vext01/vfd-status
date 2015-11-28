@@ -92,6 +92,7 @@ class MpdPlugin(BasePlugiun):
     PLAY_SYMBOL = 0x99
     PAUSE_SYMBOL = 0x9c
     STOP_SYMBOL = 0xf8
+    CRASHED_SYMBOL = 0xff
 
     def _get_playstate(self):
         p = subprocess.Popen("mpc", shell=True, stdout=subprocess.PIPE)
@@ -102,14 +103,24 @@ class MpdPlugin(BasePlugiun):
         if len(lines) == 1:
             return self.STOP_SYMBOL
         else:
-            assert len(lines) == 3
-            s_idx = lines[1].index("[")
-            e_idx = lines[1].index("]")
-            mode = lines[1][s_idx + 1:e_idx]
+            assert len(lines) >= 2
+            line2 = lines[1]
+            if line2.startswith("ERROR"):
+                mode = "crashed"
+            else:
+                s_idx = line2.index("[")
+                e_idx = line2.index("]")
+                mode = line2[s_idx + 1:e_idx]
+
             if mode == "playing":
                 mode_ch = self.PLAY_SYMBOL
             elif mode == "paused":
                 mode_ch = self.PAUSE_SYMBOL
+            elif mode == "crashed":
+                mode_ch = self.CRASHED_SYMBOL
+            else:
+                assert False
+
             return mode_ch
 
     def _get_field(self, field):
@@ -123,8 +134,11 @@ class MpdPlugin(BasePlugiun):
             # hrm, MPD is stopped
             v = ""
         else:
-            assert(len(lines) == 3)
-            v = lines[0].strip()
+            assert len(lines) >= 2
+            if lines[1].startswith("ERROR"):
+                v = ""
+            else:
+                v = lines[0].strip()
 
         print("field %s=%s" % (field, v))
         return v
